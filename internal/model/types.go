@@ -64,6 +64,18 @@ type QuotaState struct {
 	EffectiveAt            time.Time
 }
 
+type BillingProfile struct {
+	AccountUUID        string
+	PackageName        string
+	IncludedQuotaBytes int64
+	BasePricePerByte   float64
+	RegionMultiplier   float64
+	LineMultiplier     float64
+	PeakMultiplier     float64
+	OffPeakMultiplier  float64
+	PricingRuleVersion string
+}
+
 type JobResult struct {
 	Job              string    `json:"job"`
 	StartedAt        time.Time `json:"started_at"`
