@@ -70,3 +70,17 @@ CREATE TABLE IF NOT EXISTS public.account_quota_states (
   effective_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS public.account_billing_profiles (
+  account_uuid UUID PRIMARY KEY REFERENCES public.users(uuid) ON DELETE CASCADE,
+  package_name TEXT NOT NULL DEFAULT 'default',
+  included_quota_bytes BIGINT NOT NULL DEFAULT 0,
+  base_price_per_byte DOUBLE PRECISION NOT NULL DEFAULT 0,
+  region_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+  line_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+  peak_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+  offpeak_multiplier DOUBLE PRECISION NOT NULL DEFAULT 1.0,
+  pricing_rule_version TEXT NOT NULL DEFAULT 'pricing-default-v1',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

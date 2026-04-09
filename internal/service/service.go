@@ -148,6 +148,12 @@ func (s *Service) processSample(ctx context.Context, snapshot model.Snapshot, sa
 	}
 
 	totalBytes := deltaUplink + deltaDownlink
+	profile, err := s.repo.GetBillingProfile(ctx, sample.UUID)
+	if err != nil {
+		return false, fmt.Errorf("get billing profile %s: %w", sample.UUID, err)
+	}
+	effectivePricing := resolvePricing(profile, s.cfg)
+
 	bucket := model.MinuteBucket{
 		BucketStart:    minuteStart,
 		NodeID:         storageNodeID,
@@ -157,9 +163,9 @@ func (s *Service) processSample(ctx context.Context, snapshot model.Snapshot, sa
 		UplinkBytes:    deltaUplink,
 		DownlinkBytes:  deltaDownlink,
 		TotalBytes:     totalBytes,
-		Multiplier:     1.0,
+		Multiplier:     effectivePricing.multiplier,
 		RatingStatus:   "rated",
-		SourceRevision: s.cfg.SourceRevision,
+		SourceRevision: effectivePricing.pricingRuleVersion,
 	}
 
 	minuteExisted, err := s.repo.UpsertMinuteBucket(ctx, bucket)
@@ -191,13 +197,20 @@ func (s *Service) processSample(ctx context.Context, snapshot model.Snapshot, sa
 	if quota == nil {
 		quota = &model.QuotaState{
 			AccountUUID:            sample.UUID,
-			RemainingIncludedQuota: s.cfg.InitialIncludedQuotaBytes,
+			RemainingIncludedQuota: effectivePricing.includedQuotaBytes,
 			CurrentBalance:         s.cfg.InitialBalance,
 			ThrottleState:          "normal",
 			SuspendState:           "active",
 			EffectiveAt:            snapshot.CollectedAt.UTC(),
 		}
 	}
+
+	includedApplied := minInt64(quota.RemainingIncludedQuota, totalBytes)
+	chargeableBytes := totalBytes - includedApplied
+	amountDelta = -float64(chargeableBytes) * effectivePricing.basePricePerByte * effectivePricing.multiplier
+	entry.RatedBytes = chargeableBytes
+	entry.AmountDelta = amountDelta
+	entry.PricingRuleVersion = effectivePricing.pricingRuleVersion
 	entry.BalanceAfter = quota.CurrentBalance + amountDelta
 
 	ledgerExisted, err := s.repo.UpsertLedger(ctx, entry)
@@ -206,12 +219,18 @@ func (s *Service) processSample(ctx context.Context, snapshot model.Snapshot, sa
 	}
 
 	if !ledgerExisted {
-		remainingQuota := quota.RemainingIncludedQuota - totalBytes
+		remainingQuota := quota.RemainingIncludedQuota - includedApplied
 		if remainingQuota < 0 {
 			remainingQuota = 0
 		}
 		quota.RemainingIncludedQuota = remainingQuota
 		quota.CurrentBalance = entry.BalanceAfter
+		quota.Arrears = quota.CurrentBalance < 0
+		if quota.Arrears {
+			quota.ThrottleState = "throttled"
+		} else {
+			quota.ThrottleState = "normal"
+		}
 		quota.EffectiveAt = snapshot.CollectedAt.UTC()
 		lastRated := minuteStart
 		quota.LastRatedBucketAt = &lastRated
@@ -235,6 +254,54 @@ func (s *Service) processSample(ctx context.Context, snapshot model.Snapshot, sa
 	}
 
 	return true, nil
+}
+
+type effectivePricing struct {
+	includedQuotaBytes int64
+	basePricePerByte   float64
+	multiplier         float64
+	pricingRuleVersion string
+}
+
+func resolvePricing(profile *model.BillingProfile, cfg config.Config) effectivePricing {
+	pricing := effectivePricing{
+		includedQuotaBytes: cfg.InitialIncludedQuotaBytes,
+		basePricePerByte:   cfg.PricePerByte,
+		multiplier:         1.0,
+		pricingRuleVersion: cfg.SourceRevision,
+	}
+	if profile == nil {
+		return pricing
+	}
+	if profile.IncludedQuotaBytes > 0 {
+		pricing.includedQuotaBytes = profile.IncludedQuotaBytes
+	}
+	if profile.BasePricePerByte > 0 {
+		pricing.basePricePerByte = profile.BasePricePerByte
+	}
+	regionMultiplier := profile.RegionMultiplier
+	if regionMultiplier <= 0 {
+		regionMultiplier = 1.0
+	}
+	lineMultiplier := profile.LineMultiplier
+	if lineMultiplier <= 0 {
+		lineMultiplier = 1.0
+	}
+	pricing.multiplier = regionMultiplier * lineMultiplier
+	if pricing.multiplier <= 0 {
+		pricing.multiplier = 1.0
+	}
+	if strings.TrimSpace(profile.PricingRuleVersion) != "" {
+		pricing.pricingRuleVersion = strings.TrimSpace(profile.PricingRuleVersion)
+	}
+	return pricing
+}
+
+func minInt64(a, b int64) int64 {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func validateSample(sample model.Sample) error {

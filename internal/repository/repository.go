@@ -13,4 +13,5 @@ type Repository interface {
 	UpsertLedger(ctx context.Context, entry model.LedgerEntry) (bool, error)
 	GetQuotaState(ctx context.Context, accountUUID string) (*model.QuotaState, error)
 	UpsertQuotaState(ctx context.Context, state model.QuotaState) error
+	GetBillingProfile(ctx context.Context, accountUUID string) (*model.BillingProfile, error)
 }

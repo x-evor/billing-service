@@ -224,6 +224,32 @@ func (p *Postgres) UpsertQuotaState(ctx context.Context, state model.QuotaState)
 	return err
 }
 
+func (p *Postgres) GetBillingProfile(ctx context.Context, accountUUID string) (*model.BillingProfile, error) {
+	const query = `
+		SELECT account_uuid, package_name, included_quota_bytes, base_price_per_byte, region_multiplier, line_multiplier, peak_multiplier, offpeak_multiplier, pricing_rule_version
+		FROM account_billing_profiles
+		WHERE account_uuid = $1`
+	var profile model.BillingProfile
+	err := p.db.QueryRowContext(ctx, query, accountUUID).Scan(
+		&profile.AccountUUID,
+		&profile.PackageName,
+		&profile.IncludedQuotaBytes,
+		&profile.BasePricePerByte,
+		&profile.RegionMultiplier,
+		&profile.LineMultiplier,
+		&profile.PeakMultiplier,
+		&profile.OffPeakMultiplier,
+		&profile.PricingRuleVersion,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &profile, nil
+}
+
 var _ Repository = (*Postgres)(nil)
 
 func ensureUTC(ts time.Time) time.Time {
