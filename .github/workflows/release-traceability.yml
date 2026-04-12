@@ -47,7 +47,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: deploy
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify traceability script cases
+        run: bash ./scripts/github-actions/test-validate-release-traceability.sh
+
       - name: Validate runtime traceability
         env:
           SERVICE_IMAGE_REF: ${{ needs.build.outputs.service_image_ref }}
+          RUNTIME_PING_URL: https://accounts.svc.plus/api/ping
         run: bash ./scripts/github-actions/validate-release-traceability.sh

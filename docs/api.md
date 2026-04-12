@@ -9,6 +9,14 @@ upstream and downstream interfaces it depends on.
 
 Returns the runtime image identity exposed by the running container.
 
+Validation notes:
+
+- release traceability checks this endpoint with `GET`, not `HEAD`
+- `accounts.svc.plus/api/ping` is the current production validation target for
+  release identity
+- empty `image`, `tag`, `commit`, or `version` means runtime image identity was
+  not injected correctly and should fail deployment validation
+
 Example response:
 
 ```json
