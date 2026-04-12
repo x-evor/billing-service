@@ -1,20 +1,8 @@
-CREATE TABLE IF NOT EXISTS public.users (
-  uuid UUID PRIMARY KEY,
-  username TEXT NOT NULL,
-  password TEXT NOT NULL,
-  email TEXT,
-  role TEXT NOT NULL DEFAULT 'user',
-  level INTEGER NOT NULL DEFAULT 20,
-  groups JSONB NOT NULL DEFAULT '[]'::jsonb,
-  permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  version BIGINT NOT NULL DEFAULT 0,
-  origin_node TEXT NOT NULL DEFAULT 'local',
-  active BOOLEAN NOT NULL DEFAULT TRUE,
-  proxy_uuid UUID NOT NULL,
-  CONSTRAINT users_email_optional_ck CHECK (email IS NULL OR length(email) > 0)
-);
+-- billing-service bootstrap/reference DDL
+--
+-- This file mirrors the accounting tables that billing-service depends on in
+-- the current accounts.svc.plus PostgreSQL schema. It is a service-owned
+-- documentation/bootstrap artifact and does not redefine schema ownership.
 
 CREATE TABLE IF NOT EXISTS public.traffic_stat_checkpoints (
   node_id TEXT NOT NULL,
@@ -93,3 +81,9 @@ CREATE TABLE IF NOT EXISTS public.billing_source_sync_state (
   last_error TEXT NOT NULL DEFAULT '',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE INDEX IF NOT EXISTS idx_traffic_minute_buckets_account_bucket
+  ON public.traffic_minute_buckets (account_uuid, bucket_start DESC);
+
+CREATE INDEX IF NOT EXISTS idx_billing_ledger_account_created
+  ON public.billing_ledger (account_uuid, created_at DESC);

@@ -14,4 +14,6 @@ type Repository interface {
 	GetQuotaState(ctx context.Context, accountUUID string) (*model.QuotaState, error)
 	UpsertQuotaState(ctx context.Context, state model.QuotaState) error
 	GetBillingProfile(ctx context.Context, accountUUID string) (*model.BillingProfile, error)
+	GetSourceSyncState(ctx context.Context, sourceID string) (*model.SourceSyncState, error)
+	UpsertSourceSyncState(ctx context.Context, state model.SourceSyncState) error
 }

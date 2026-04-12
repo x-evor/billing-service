@@ -17,6 +17,14 @@ type Snapshot struct {
 	Samples     []Sample  `json:"samples"`
 }
 
+type SnapshotWindowPage struct {
+	NodeID     string     `json:"node_id"`
+	Env        string     `json:"env"`
+	Snapshots  []Snapshot `json:"snapshots"`
+	HasMore    bool       `json:"has_more"`
+	NextCursor string     `json:"next_cursor,omitempty"`
+}
+
 type Checkpoint struct {
 	NodeID            string
 	AccountUUID       string
@@ -76,13 +84,30 @@ type BillingProfile struct {
 	PricingRuleVersion string
 }
 
+type SourceSyncState struct {
+	SourceID           string
+	LastCompletedUntil *time.Time
+	LastAttemptedAt    *time.Time
+	LastSucceededAt    *time.Time
+	LastError          string
+}
+
+type SourceStatus struct {
+	SourceID           string     `json:"source_id"`
+	LastCompletedUntil *time.Time `json:"last_completed_until,omitempty"`
+	LastAttemptedAt    *time.Time `json:"last_attempted_at,omitempty"`
+	LastSucceededAt    *time.Time `json:"last_succeeded_at,omitempty"`
+	LastError          string     `json:"last_error,omitempty"`
+}
+
 type JobResult struct {
-	Job              string    `json:"job"`
-	StartedAt        time.Time `json:"started_at"`
-	FinishedAt       time.Time `json:"finished_at"`
-	ProcessedSamples int       `json:"processed_samples"`
-	WrittenMinutes   int       `json:"written_minutes"`
-	ReplayedMinutes  int       `json:"replayed_minutes"`
-	Status           string    `json:"status"`
-	Error            string    `json:"error,omitempty"`
+	Job              string         `json:"job"`
+	StartedAt        time.Time      `json:"started_at"`
+	FinishedAt       time.Time      `json:"finished_at"`
+	ProcessedSamples int            `json:"processed_samples"`
+	WrittenMinutes   int            `json:"written_minutes"`
+	ReplayedMinutes  int            `json:"replayed_minutes"`
+	Status           string         `json:"status"`
+	Error            string         `json:"error,omitempty"`
+	SourceStatuses   []SourceStatus `json:"source_statuses,omitempty"`
 }
