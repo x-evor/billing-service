@@ -5,7 +5,9 @@ release identity.
 
 ## Runtime contract
 
-- `IMAGE` must contain the full image reference used to start the container.
+- `IMAGE` must contain the full release image reference produced by the build
+  job, even when the target host runs the service as a systemd binary instead
+  of a container.
 - `/api/ping` returns `image`, `tag`, `commit`, and `version`.
 - `tag`, `commit`, and `version` are derived from `IMAGE`.
 - If `IMAGE` is missing or malformed, the derived fields stay empty instead of
@@ -14,9 +16,13 @@ release identity.
 ## Pipeline contract
 
 - Build must produce `service_image_ref` only from the full `GITHUB_SHA`.
-- Deploy must consume `service_image_ref` and pass it through as the runtime
-  image identity.
-- Validate must use `GET https://accounts.svc.plus/api/ping`.
+- Build must also produce the linux billing-service binary artifact consumed by
+  deploy.
+- Deploy must consume that build artifact directly and must not rebuild on the
+  target host.
+- Deploy must pass `service_image_ref` through as the runtime image identity.
+- Validate must query `billing-service` on the deployment target at
+  `http://127.0.0.1:8081/api/ping` over SSH.
 - Validate must derive `tag` and `commit` from `service_image_ref` and compare
   them against `/api/ping`.
 - Validate must fail when runtime `image`, `tag`, `commit`, or `version` is
@@ -27,11 +33,11 @@ release identity.
 ## External playbook alignment
 
 The external `playbooks/deploy_billing_service.yml` playbook should accept
-`IMAGE_REF` (or an equivalent full image reference variable), derive any
-repo/tag helpers from it, and inject `IMAGE=<full image ref>` into the running
-container environment for the service exposed through
-`https://accounts.svc.plus/api/ping`.
+`BILLING_SERVICE_BINARY_ARTIFACT` and `BILLING_SERVICE_IMAGE_REF`, deploy the
+binary artifact to the target host without rebuilding it there, and inject
+`IMAGE=<full image ref>` into `/etc/default/billing-service` for the runtime
+served through `http://127.0.0.1:8081/api/ping`.
 
-If `accounts.svc.plus/api/ping` keeps returning empty runtime metadata, treat
+If `billing-service /api/ping` keeps returning empty runtime metadata, treat
 that as a deployment contract failure: the runtime did not receive the full
 `IMAGE` value and release traceability is broken.

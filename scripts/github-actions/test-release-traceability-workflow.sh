@@ -30,6 +30,34 @@ if not any(line.strip() == "- build" for line in validate_block):
 if not any(line.strip() == "- deploy" for line in validate_block):
     raise SystemExit("validate job must depend on deploy")
 
+build_block = []
+deploy_block = []
+current_job = None
+
+for line in lines:
+    if line.startswith("  build:"):
+        current_job = "build"
+    elif line.startswith("  deploy:"):
+        current_job = "deploy"
+    elif line.startswith("  validate:"):
+        current_job = "validate"
+    elif line.startswith("  ") and not line.startswith("    "):
+        current_job = None
+
+    if current_job == "build":
+        build_block.append(line)
+    elif current_job == "deploy":
+        deploy_block.append(line)
+
+if not any("Upload billing-service binary artifact" in line for line in build_block):
+    raise SystemExit("build job must upload the billing-service binary artifact")
+
+if not any("Download billing-service binary artifact" in line for line in deploy_block):
+    raise SystemExit("deploy job must download the billing-service binary artifact")
+
+if not any("BILLING_SERVICE_IMAGE_REF: ${{ needs.build.outputs.service_image_ref }}" in line for line in deploy_block):
+    raise SystemExit("deploy job must consume needs.build.outputs.service_image_ref")
+
 if not any("SERVICE_IMAGE_REF: ${{ needs.build.outputs.service_image_ref }}" in line for line in validate_block):
     raise SystemExit("validate job must consume needs.build.outputs.service_image_ref")
 PY
