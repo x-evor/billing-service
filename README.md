@@ -13,3 +13,11 @@ existing `accounts.svc.plus` PostgreSQL schema.
 - `POST /v1/jobs/reconcile`
 - `GET /healthz`
 - `GET /v1/status`
+
+## Documentation
+
+- `docs/README.md` - documentation index and verification notes
+- `docs/architecture.md` - deployment and data-flow diagrams
+- `docs/api.md` - task API surface and upstream/downstream boundaries
+- `sql/billing-service-schema.sql` - bootstrap/reference DDL aligned with the
+  current `accounts.svc.plus` accounting schema

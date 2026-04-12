@@ -34,7 +34,7 @@ func main() {
 
 	svc := service.New(
 		cfg,
-		exporter.NewClient(cfg.ExporterBaseURL),
+		exporter.NewClient(cfg.InternalServiceToken),
 		repository.NewPostgres(db),
 	)
 	svc.Start(ctx)

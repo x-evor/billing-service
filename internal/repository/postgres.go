@@ -250,6 +250,81 @@ func (p *Postgres) GetBillingProfile(ctx context.Context, accountUUID string) (*
 	return &profile, nil
 }
 
+func (p *Postgres) GetSourceSyncState(ctx context.Context, sourceID string) (*model.SourceSyncState, error) {
+	const query = `
+		SELECT source_id, last_completed_until, last_attempted_at, last_succeeded_at, last_error
+		FROM billing_source_sync_state
+		WHERE source_id = $1`
+
+	var state model.SourceSyncState
+	var lastCompleted sql.NullTime
+	var lastAttempted sql.NullTime
+	var lastSucceeded sql.NullTime
+
+	err := p.db.QueryRowContext(ctx, query, sourceID).Scan(
+		&state.SourceID,
+		&lastCompleted,
+		&lastAttempted,
+		&lastSucceeded,
+		&state.LastError,
+	)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if lastCompleted.Valid {
+		value := lastCompleted.Time
+		state.LastCompletedUntil = &value
+	}
+	if lastAttempted.Valid {
+		value := lastAttempted.Time
+		state.LastAttemptedAt = &value
+	}
+	if lastSucceeded.Valid {
+		value := lastSucceeded.Time
+		state.LastSucceededAt = &value
+	}
+	return &state, nil
+}
+
+func (p *Postgres) UpsertSourceSyncState(ctx context.Context, state model.SourceSyncState) error {
+	const query = `
+		INSERT INTO billing_source_sync_state (
+			source_id, last_completed_until, last_attempted_at, last_succeeded_at, last_error
+		) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (source_id) DO UPDATE SET
+			last_completed_until = EXCLUDED.last_completed_until,
+			last_attempted_at = EXCLUDED.last_attempted_at,
+			last_succeeded_at = EXCLUDED.last_succeeded_at,
+			last_error = EXCLUDED.last_error,
+			updated_at = now()
+	`
+
+	var lastCompleted any
+	if state.LastCompletedUntil != nil {
+		lastCompleted = state.LastCompletedUntil.UTC()
+	}
+	var lastAttempted any
+	if state.LastAttemptedAt != nil {
+		lastAttempted = state.LastAttemptedAt.UTC()
+	}
+	var lastSucceeded any
+	if state.LastSucceededAt != nil {
+		lastSucceeded = state.LastSucceededAt.UTC()
+	}
+
+	_, err := p.db.ExecContext(ctx, query,
+		state.SourceID,
+		lastCompleted,
+		lastAttempted,
+		lastSucceeded,
+		state.LastError,
+	)
+	return err
+}
+
 var _ Repository = (*Postgres)(nil)
 
 func ensureUTC(ts time.Time) time.Time {

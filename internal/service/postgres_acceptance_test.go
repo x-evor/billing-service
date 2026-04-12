@@ -43,6 +43,7 @@ func TestPostgresAcceptanceWritesAccountingTables(t *testing.T) {
 
 	accountUUID := "11111111-1111-1111-1111-111111111111"
 	if _, err := db.ExecContext(ctx, `
+		DELETE FROM billing_source_sync_state;
 		DELETE FROM billing_ledger;
 		DELETE FROM traffic_minute_buckets;
 		DELETE FROM traffic_stat_checkpoints;
@@ -59,22 +60,33 @@ func TestPostgresAcceptanceWritesAccountingTables(t *testing.T) {
 	}
 
 	svc := New(config.Config{
+		ExporterSources: []config.ExporterSource{{
+			SourceID:       "default",
+			BaseURL:        "https://jp-xhttp-contabo.svc.plus",
+			ExpectedNodeID: "jp-node",
+			ExpectedEnv:    "prod",
+			Enabled:        true,
+			TimeoutSeconds: 15,
+		}},
+		InternalServiceToken:      "secret",
 		DefaultRegion:             "",
 		SourceRevision:            "billing-service-acceptance",
 		PricePerByte:              0.5,
 		InitialIncludedQuotaBytes: 1000,
 		InitialBalance:            0,
-	}, fakeSource{snapshot: model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 11, 0, 45, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples: []model.Sample{{
-			UUID:               accountUUID,
-			Email:              "billing@example.com",
-			InboundTag:         "premium",
-			UplinkBytesTotal:   100,
-			DownlinkBytesTotal: 50,
-		}},
+	}, &fakeWindowSource{pagesBySource: map[string][]model.SnapshotWindowPage{
+		"default": {singleSnapshotPage(model.Snapshot{
+			CollectedAt: time.Date(2026, 4, 8, 11, 0, 45, 0, time.UTC),
+			NodeID:      "jp-node",
+			Env:         "prod",
+			Samples: []model.Sample{{
+				UUID:               accountUUID,
+				Email:              "billing@example.com",
+				InboundTag:         "premium",
+				UplinkBytesTotal:   100,
+				DownlinkBytesTotal: 50,
+			}},
+		})},
 	}}, repository.NewPostgres(db))
 
 	result, err := svc.RunCollectAndRate(ctx, "collect-and-rate")
@@ -89,6 +101,7 @@ func TestPostgresAcceptanceWritesAccountingTables(t *testing.T) {
 	assertRowCount(t, db, "traffic_minute_buckets", 1)
 	assertRowCount(t, db, "billing_ledger", 1)
 	assertRowCount(t, db, "account_quota_states", 1)
+	assertRowCount(t, db, "billing_source_sync_state", 1)
 
 	var totalBytes int64
 	if err := db.QueryRowContext(ctx, `SELECT total_bytes FROM traffic_minute_buckets LIMIT 1`).Scan(&totalBytes); err != nil {

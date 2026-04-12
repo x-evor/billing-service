@@ -10,13 +10,38 @@ import (
 	"billing-service/internal/repository"
 )
 
-type fakeSource struct {
-	snapshot model.Snapshot
-	err      error
+type fakeWindowSource struct {
+	pagesBySource map[string][]model.SnapshotWindowPage
+	errBySource   map[string]error
+	requests      []windowRequest
 }
 
-func (f fakeSource) FetchLatestSnapshot(context.Context) (model.Snapshot, error) {
-	return f.snapshot, f.err
+type windowRequest struct {
+	sourceID string
+	since    time.Time
+	until    time.Time
+	limit    int
+	cursor   *time.Time
+}
+
+func (f *fakeWindowSource) FetchWindow(_ context.Context, source config.ExporterSource, since, until time.Time, limit int, cursor *time.Time) (model.SnapshotWindowPage, error) {
+	f.requests = append(f.requests, windowRequest{
+		sourceID: source.SourceID,
+		since:    since,
+		until:    until,
+		limit:    limit,
+		cursor:   cursor,
+	})
+	if err := f.errBySource[source.SourceID]; err != nil {
+		return model.SnapshotWindowPage{}, err
+	}
+	pages := f.pagesBySource[source.SourceID]
+	if len(pages) == 0 {
+		return model.SnapshotWindowPage{}, nil
+	}
+	page := pages[0]
+	f.pagesBySource[source.SourceID] = pages[1:]
+	return page, nil
 }
 
 type memoryRepo struct {
@@ -25,6 +50,7 @@ type memoryRepo struct {
 	ledgers     map[string]model.LedgerEntry
 	quotas      map[string]model.QuotaState
 	profiles    map[string]model.BillingProfile
+	sourceSync  map[string]model.SourceSyncState
 }
 
 func newMemoryRepo() *memoryRepo {
@@ -34,6 +60,7 @@ func newMemoryRepo() *memoryRepo {
 		ledgers:     map[string]model.LedgerEntry{},
 		quotas:      map[string]model.QuotaState{},
 		profiles:    map[string]model.BillingProfile{},
+		sourceSync:  map[string]model.SourceSyncState{},
 	}
 }
 
@@ -45,7 +72,7 @@ func bucketKey(bucket model.MinuteBucket) string {
 	return bucket.BucketStart.UTC().Format(time.RFC3339) + "\x00" + bucket.NodeID + "\x00" + bucket.AccountUUID + "\x00" + bucket.Region + "\x00" + bucket.LineCode
 }
 
-func (m *memoryRepo) GetCheckpoint(ctx context.Context, nodeID, accountUUID string) (*model.Checkpoint, error) {
+func (m *memoryRepo) GetCheckpoint(_ context.Context, nodeID, accountUUID string) (*model.Checkpoint, error) {
 	if checkpoint, ok := m.checkpoints[checkpointKey(nodeID, accountUUID)]; ok {
 		copy := checkpoint
 		return &copy, nil
@@ -53,25 +80,25 @@ func (m *memoryRepo) GetCheckpoint(ctx context.Context, nodeID, accountUUID stri
 	return nil, nil
 }
 
-func (m *memoryRepo) UpsertCheckpoint(ctx context.Context, checkpoint model.Checkpoint) error {
+func (m *memoryRepo) UpsertCheckpoint(_ context.Context, checkpoint model.Checkpoint) error {
 	m.checkpoints[checkpointKey(checkpoint.NodeID, checkpoint.AccountUUID)] = checkpoint
 	return nil
 }
 
-func (m *memoryRepo) UpsertMinuteBucket(ctx context.Context, bucket model.MinuteBucket) (bool, error) {
+func (m *memoryRepo) UpsertMinuteBucket(_ context.Context, bucket model.MinuteBucket) (bool, error) {
 	key := bucketKey(bucket)
 	_, existed := m.buckets[key]
 	m.buckets[key] = bucket
 	return existed, nil
 }
 
-func (m *memoryRepo) UpsertLedger(ctx context.Context, entry model.LedgerEntry) (bool, error) {
+func (m *memoryRepo) UpsertLedger(_ context.Context, entry model.LedgerEntry) (bool, error) {
 	_, existed := m.ledgers[entry.ID]
 	m.ledgers[entry.ID] = entry
 	return existed, nil
 }
 
-func (m *memoryRepo) GetQuotaState(ctx context.Context, accountUUID string) (*model.QuotaState, error) {
+func (m *memoryRepo) GetQuotaState(_ context.Context, accountUUID string) (*model.QuotaState, error) {
 	if quota, ok := m.quotas[accountUUID]; ok {
 		copy := quota
 		return &copy, nil
@@ -79,12 +106,12 @@ func (m *memoryRepo) GetQuotaState(ctx context.Context, accountUUID string) (*mo
 	return nil, nil
 }
 
-func (m *memoryRepo) UpsertQuotaState(ctx context.Context, state model.QuotaState) error {
+func (m *memoryRepo) UpsertQuotaState(_ context.Context, state model.QuotaState) error {
 	m.quotas[state.AccountUUID] = state
 	return nil
 }
 
-func (m *memoryRepo) GetBillingProfile(ctx context.Context, accountUUID string) (*model.BillingProfile, error) {
+func (m *memoryRepo) GetBillingProfile(_ context.Context, accountUUID string) (*model.BillingProfile, error) {
 	if profile, ok := m.profiles[accountUUID]; ok {
 		copy := profile
 		return &copy, nil
@@ -92,10 +119,40 @@ func (m *memoryRepo) GetBillingProfile(ctx context.Context, accountUUID string) 
 	return nil, nil
 }
 
+func (m *memoryRepo) GetSourceSyncState(_ context.Context, sourceID string) (*model.SourceSyncState, error) {
+	if state, ok := m.sourceSync[sourceID]; ok {
+		copy := cloneSyncState(state)
+		return &copy, nil
+	}
+	return nil, nil
+}
+
+func (m *memoryRepo) UpsertSourceSyncState(_ context.Context, state model.SourceSyncState) error {
+	m.sourceSync[state.SourceID] = cloneSyncState(state)
+	return nil
+}
+
+func cloneSyncState(state model.SourceSyncState) model.SourceSyncState {
+	copy := state
+	copy.LastCompletedUntil = copyTimePtr(state.LastCompletedUntil)
+	copy.LastAttemptedAt = copyTimePtr(state.LastAttemptedAt)
+	copy.LastSucceededAt = copyTimePtr(state.LastSucceededAt)
+	return copy
+}
+
 var _ repository.Repository = (*memoryRepo)(nil)
 
 func baseConfig() config.Config {
 	return config.Config{
+		ExporterSources: []config.ExporterSource{{
+			SourceID:       "default",
+			BaseURL:        "https://jp-xhttp-contabo.svc.plus",
+			ExpectedNodeID: "jp-node",
+			ExpectedEnv:    "prod",
+			Enabled:        true,
+			TimeoutSeconds: 15,
+		}},
+		InternalServiceToken:      "secret",
 		DefaultRegion:             "",
 		SourceRevision:            "billing-service-v1",
 		PricePerByte:              0.5,
@@ -104,20 +161,33 @@ func baseConfig() config.Config {
 	}
 }
 
+func singleSnapshotPage(snapshot model.Snapshot) model.SnapshotWindowPage {
+	return model.SnapshotWindowPage{
+		NodeID:    snapshot.NodeID,
+		Env:       snapshot.Env,
+		Snapshots: []model.Snapshot{snapshot},
+	}
+}
+
 func TestDeltaCalculationAndQuotaUpdate(t *testing.T) {
 	repo := newMemoryRepo()
-	svc := New(baseConfig(), fakeSource{snapshot: model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 10, 30, 15, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples: []model.Sample{{
-			UUID:               "11111111-1111-1111-1111-111111111111",
-			Email:              "user@example.com",
-			InboundTag:         "premium",
-			UplinkBytesTotal:   100,
-			DownlinkBytesTotal: 50,
-		}},
-	}}, repo)
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"default": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 30, 15, 0, time.UTC),
+				NodeID:      "jp-node",
+				Env:         "prod",
+				Samples: []model.Sample{{
+					UUID:               "11111111-1111-1111-1111-111111111111",
+					Email:              "user@example.com",
+					InboundTag:         "premium",
+					UplinkBytesTotal:   100,
+					DownlinkBytesTotal: 50,
+				}},
+			})},
+		},
+	}
+	svc := New(baseConfig(), source, repo)
 
 	result, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate")
 	if err != nil {
@@ -144,17 +214,22 @@ func TestIncludedQuotaAndMultipliersFromBillingProfile(t *testing.T) {
 		LineMultiplier:     2.0,
 		PricingRuleVersion: "pricing-v2",
 	}
-	svc := New(baseConfig(), fakeSource{snapshot: model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 10, 30, 15, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples: []model.Sample{{
-			UUID:               accountUUID,
-			InboundTag:         "premium",
-			UplinkBytesTotal:   100,
-			DownlinkBytesTotal: 50,
-		}},
-	}}, repo)
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"default": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 30, 15, 0, time.UTC),
+				NodeID:      "jp-node",
+				Env:         "prod",
+				Samples: []model.Sample{{
+					UUID:               accountUUID,
+					InboundTag:         "premium",
+					UplinkBytesTotal:   100,
+					DownlinkBytesTotal: 50,
+				}},
+			})},
+		},
+	}
+	svc := New(baseConfig(), source, repo)
 
 	result, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate")
 	if err != nil {
@@ -197,19 +272,37 @@ func TestIncludedQuotaAndMultipliersFromBillingProfile(t *testing.T) {
 
 func TestDuplicateMinuteIsReplaySafe(t *testing.T) {
 	repo := newMemoryRepo()
-	snapshot := model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 10, 30, 30, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples: []model.Sample{{
-			UUID:               "11111111-1111-1111-1111-111111111111",
-			Email:              "user@example.com",
-			InboundTag:         "premium",
-			UplinkBytesTotal:   100,
-			DownlinkBytesTotal: 50,
-		}},
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"default": {
+				singleSnapshotPage(model.Snapshot{
+					CollectedAt: time.Date(2026, 4, 8, 10, 30, 30, 0, time.UTC),
+					NodeID:      "jp-node",
+					Env:         "prod",
+					Samples: []model.Sample{{
+						UUID:               "11111111-1111-1111-1111-111111111111",
+						Email:              "user@example.com",
+						InboundTag:         "premium",
+						UplinkBytesTotal:   100,
+						DownlinkBytesTotal: 50,
+					}},
+				}),
+				singleSnapshotPage(model.Snapshot{
+					CollectedAt: time.Date(2026, 4, 8, 10, 30, 30, 0, time.UTC),
+					NodeID:      "jp-node",
+					Env:         "prod",
+					Samples: []model.Sample{{
+						UUID:               "11111111-1111-1111-1111-111111111111",
+						Email:              "user@example.com",
+						InboundTag:         "premium",
+						UplinkBytesTotal:   100,
+						DownlinkBytesTotal: 50,
+					}},
+				}),
+			},
+		},
 	}
-	svc := New(baseConfig(), fakeSource{snapshot: snapshot}, repo)
+	svc := New(baseConfig(), source, repo)
 
 	if _, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate"); err != nil {
 		t.Fatalf("first run: %v", err)
@@ -240,17 +333,22 @@ func TestNegativeDeltaProtection(t *testing.T) {
 		XrayRevision:      "prev",
 		ResetEpoch:        0,
 	}
-	svc := New(cfg, fakeSource{snapshot: model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 10, 31, 0, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples: []model.Sample{{
-			UUID:               accountUUID,
-			InboundTag:         "premium",
-			UplinkBytesTotal:   10,
-			DownlinkBytesTotal: 20,
-		}},
-	}}, repo)
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"default": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 31, 0, 0, time.UTC),
+				NodeID:      "jp-node",
+				Env:         "prod",
+				Samples: []model.Sample{{
+					UUID:               accountUUID,
+					InboundTag:         "premium",
+					UplinkBytesTotal:   10,
+					DownlinkBytesTotal: 20,
+				}},
+			})},
+		},
+	}
+	svc := New(cfg, source, repo)
 
 	result, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate")
 	if err != nil {
@@ -278,17 +376,22 @@ func TestRestartRecoveryFromCheckpoint(t *testing.T) {
 		LastDownlinkTotal: 100,
 		LastSeenAt:        time.Now().UTC(),
 	}
-	svc := New(baseConfig(), fakeSource{snapshot: model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 10, 32, 0, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples: []model.Sample{{
-			UUID:               accountUUID,
-			InboundTag:         "premium",
-			UplinkBytesTotal:   130,
-			DownlinkBytesTotal: 140,
-		}},
-	}}, repo)
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"default": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 32, 0, 0, time.UTC),
+				NodeID:      "jp-node",
+				Env:         "prod",
+				Samples: []model.Sample{{
+					UUID:               accountUUID,
+					InboundTag:         "premium",
+					UplinkBytesTotal:   130,
+					DownlinkBytesTotal: 140,
+				}},
+			})},
+		},
+	}
+	svc := New(baseConfig(), source, repo)
 
 	result, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate")
 	if err != nil {
@@ -313,60 +416,103 @@ func TestMultiEnvIsolation(t *testing.T) {
 	repo := newMemoryRepo()
 	accountUUID := "11111111-1111-1111-1111-111111111111"
 	cfg := baseConfig()
-
-	prodSvc := New(cfg, fakeSource{snapshot: model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 10, 33, 0, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples:     []model.Sample{{UUID: accountUUID, InboundTag: "premium", UplinkBytesTotal: 10, DownlinkBytesTotal: 10}},
-	}}, repo)
-	previewSvc := New(cfg, fakeSource{snapshot: model.Snapshot{
-		CollectedAt: time.Date(2026, 4, 8, 10, 33, 0, 0, time.UTC),
-		NodeID:      "jp-node",
-		Env:         "preview",
-		Samples:     []model.Sample{{UUID: accountUUID, InboundTag: "premium", UplinkBytesTotal: 10, DownlinkBytesTotal: 10}},
-	}}, repo)
-
-	if _, err := prodSvc.RunCollectAndRate(context.Background(), "collect-and-rate"); err != nil {
-		t.Fatalf("prod run: %v", err)
+	cfg.ExporterSources = []config.ExporterSource{
+		{
+			SourceID:       "prod-source",
+			BaseURL:        "https://prod.svc.plus",
+			ExpectedNodeID: "jp-node",
+			ExpectedEnv:    "prod",
+			Enabled:        true,
+			TimeoutSeconds: 15,
+		},
+		{
+			SourceID:       "preview-source",
+			BaseURL:        "https://preview.svc.plus",
+			ExpectedNodeID: "jp-node",
+			ExpectedEnv:    "preview",
+			Enabled:        true,
+			TimeoutSeconds: 15,
+		},
 	}
-	if _, err := previewSvc.RunCollectAndRate(context.Background(), "collect-and-rate"); err != nil {
-		t.Fatalf("preview run: %v", err)
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"prod-source": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 33, 0, 0, time.UTC),
+				NodeID:      "jp-node",
+				Env:         "prod",
+				Samples:     []model.Sample{{UUID: accountUUID, InboundTag: "premium", UplinkBytesTotal: 10, DownlinkBytesTotal: 10}},
+			})},
+			"preview-source": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 33, 0, 0, time.UTC),
+				NodeID:      "jp-node",
+				Env:         "preview",
+				Samples:     []model.Sample{{UUID: accountUUID, InboundTag: "premium", UplinkBytesTotal: 10, DownlinkBytesTotal: 10}},
+			})},
+		},
+	}
+	svc := New(cfg, source, repo)
+
+	if _, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate"); err != nil {
+		t.Fatalf("run: %v", err)
 	}
 	if len(repo.buckets) != 2 {
 		t.Fatalf("expected isolated buckets per env, got %d", len(repo.buckets))
 	}
 }
 
-func TestLateMinuteReconcileUsesSameMinuteKey(t *testing.T) {
+func TestExpectedNodeIDMismatchIsFatalForSource(t *testing.T) {
 	repo := newMemoryRepo()
-	accountUUID := "11111111-1111-1111-1111-111111111111"
-	cfg := baseConfig()
-	collectedAt := time.Date(2026, 4, 8, 10, 34, 50, 0, time.UTC)
-	snapshot := model.Snapshot{
-		CollectedAt: collectedAt,
-		NodeID:      "jp-node",
-		Env:         "prod",
-		Samples: []model.Sample{{
-			UUID:               accountUUID,
-			InboundTag:         "premium",
-			UplinkBytesTotal:   20,
-			DownlinkBytesTotal: 20,
-		}},
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"default": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 34, 0, 0, time.UTC),
+				NodeID:      "unexpected-node",
+				Env:         "prod",
+				Samples:     []model.Sample{{UUID: "11111111-1111-1111-1111-111111111111", InboundTag: "premium", UplinkBytesTotal: 10, DownlinkBytesTotal: 10}},
+			})},
+		},
 	}
-	svc := New(cfg, fakeSource{snapshot: snapshot}, repo)
+	svc := New(baseConfig(), source, repo)
 
-	if _, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate"); err != nil {
-		t.Fatalf("first run: %v", err)
+	result, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate")
+	if err == nil {
+		t.Fatalf("expected source mismatch error")
 	}
-	result, err := svc.RunCollectAndRate(context.Background(), "reconcile")
+	if result.Status != "error" {
+		t.Fatalf("expected error status, got %#v", result)
+	}
+}
+
+func TestSourceStatusIncludesSyncState(t *testing.T) {
+	repo := newMemoryRepo()
+	source := &fakeWindowSource{
+		pagesBySource: map[string][]model.SnapshotWindowPage{
+			"default": {singleSnapshotPage(model.Snapshot{
+				CollectedAt: time.Date(2026, 4, 8, 10, 35, 0, 0, time.UTC),
+				NodeID:      "jp-node",
+				Env:         "prod",
+				Samples: []model.Sample{{
+					UUID:               "11111111-1111-1111-1111-111111111111",
+					InboundTag:         "premium",
+					UplinkBytesTotal:   10,
+					DownlinkBytesTotal: 10,
+				}},
+			})},
+		},
+	}
+	svc := New(baseConfig(), source, repo)
+
+	result, err := svc.RunCollectAndRate(context.Background(), "collect-and-rate")
 	if err != nil {
-		t.Fatalf("reconcile run: %v", err)
+		t.Fatalf("run job: %v", err)
 	}
-	if result.ReplayedMinutes == 0 {
-		t.Fatalf("expected reconcile to report replayed minute, got %#v", result)
+	if len(result.SourceStatuses) != 1 {
+		t.Fatalf("expected one source status, got %#v", result.SourceStatuses)
 	}
-	if len(repo.buckets) != 1 {
-		t.Fatalf("expected single logical minute bucket, got %d", len(repo.buckets))
+	if result.SourceStatuses[0].SourceID != "default" {
+		t.Fatalf("unexpected source status %#v", result.SourceStatuses[0])
+	}
+	if result.SourceStatuses[0].LastCompletedUntil == nil {
+		t.Fatalf("expected last completed until in source status")
 	}
 }

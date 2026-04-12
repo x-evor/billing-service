@@ -6,49 +6,65 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"billing-service/internal/config"
 	"billing-service/internal/model"
 )
 
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	serviceToken string
 }
 
-func NewClient(baseURL string) *Client {
+func NewClient(serviceToken string) *Client {
 	return &Client{
-		baseURL:    strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		httpClient: &http.Client{Timeout: 15 * time.Second},
+		serviceToken: strings.TrimSpace(serviceToken),
 	}
 }
 
-func (c *Client) FetchLatestSnapshot(ctx context.Context) (model.Snapshot, error) {
-	endpoint, err := url.JoinPath(c.baseURL, "/v1/snapshots/latest")
+func (c *Client) FetchWindow(ctx context.Context, source config.ExporterSource, since, until time.Time, limit int, cursor *time.Time) (model.SnapshotWindowPage, error) {
+	timeout := time.Duration(source.TimeoutSeconds) * time.Second
+	if timeout <= 0 {
+		timeout = 15 * time.Second
+	}
+	client := &http.Client{Timeout: timeout}
+
+	endpoint, err := url.JoinPath(strings.TrimRight(strings.TrimSpace(source.BaseURL), "/"), "/v1/snapshots/window")
 	if err != nil {
-		return model.Snapshot{}, fmt.Errorf("build snapshot endpoint: %w", err)
+		return model.SnapshotWindowPage{}, fmt.Errorf("build snapshots window endpoint: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return model.Snapshot{}, fmt.Errorf("build snapshot request: %w", err)
+		return model.SnapshotWindowPage{}, fmt.Errorf("build snapshots window request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
 
-	resp, err := c.httpClient.Do(req)
+	query := req.URL.Query()
+	query.Set("since", since.UTC().Format(time.RFC3339))
+	query.Set("until", until.UTC().Format(time.RFC3339))
+	query.Set("limit", strconv.Itoa(limit))
+	if cursor != nil {
+		query.Set("cursor", cursor.UTC().Format(time.RFC3339))
+	}
+	req.URL.RawQuery = query.Encode()
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.serviceToken)
+
+	resp, err := client.Do(req)
 	if err != nil {
-		return model.Snapshot{}, fmt.Errorf("fetch snapshot: %w", err)
+		return model.SnapshotWindowPage{}, fmt.Errorf("fetch snapshots window for %s: %w", source.SourceID, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return model.Snapshot{}, fmt.Errorf("fetch snapshot: unexpected status %s", resp.Status)
+		return model.SnapshotWindowPage{}, fmt.Errorf("fetch snapshots window for %s: unexpected status %s", source.SourceID, resp.Status)
 	}
 
-	var snapshot model.Snapshot
-	if err := json.NewDecoder(resp.Body).Decode(&snapshot); err != nil {
-		return model.Snapshot{}, fmt.Errorf("decode snapshot: %w", err)
+	var page model.SnapshotWindowPage
+	if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		return model.SnapshotWindowPage{}, fmt.Errorf("decode snapshots window for %s: %w", source.SourceID, err)
 	}
-	return snapshot, nil
+	return page, nil
 }
