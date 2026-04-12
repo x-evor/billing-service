@@ -111,3 +111,10 @@ type JobResult struct {
 	Error            string         `json:"error,omitempty"`
 	SourceStatuses   []SourceStatus `json:"source_statuses,omitempty"`
 }
+
+type PingInfo struct {
+	Image   string `json:"image"`
+	Tag     string `json:"tag,omitempty"`
+	Commit  string `json:"commit,omitempty"`
+	Version string `json:"version,omitempty"`
+}

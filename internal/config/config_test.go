@@ -30,3 +30,23 @@ func TestLoadExporterSourcesFallsBackToLegacyBaseURL(t *testing.T) {
 		t.Fatalf("unexpected source %#v", sources[0])
 	}
 }
+
+func TestParseImageRefWithFullShaTag(t *testing.T) {
+	tag, commit, version := parseImageRef("registry.example.com/billing-service:sha-0123456789abcdef0123456789abcdef01234567")
+	if tag != "sha-0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("unexpected tag %q", tag)
+	}
+	if commit != "0123456789abcdef0123456789abcdef01234567" {
+		t.Fatalf("unexpected commit %q", commit)
+	}
+	if version != commit {
+		t.Fatalf("expected version to equal commit, got %q vs %q", version, commit)
+	}
+}
+
+func TestParseImageRefRejectsIncompleteSha(t *testing.T) {
+	tag, commit, version := parseImageRef("registry.example.com/billing-service:sha-1234")
+	if tag != "sha-1234" || commit != "" || version != "" {
+		t.Fatalf("expected partial parse failure, got tag=%q commit=%q version=%q", tag, commit, version)
+	}
+}

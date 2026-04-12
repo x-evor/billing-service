@@ -18,11 +18,16 @@ func New(svc *service.Service) *Handler {
 
 func (h *Handler) Routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/ping", h.ping)
 	mux.HandleFunc("/healthz", h.healthz)
 	mux.HandleFunc("/v1/status", h.status)
 	mux.HandleFunc("/v1/jobs/collect-and-rate", h.collectAndRate)
 	mux.HandleFunc("/v1/jobs/reconcile", h.reconcile)
 	return mux
+}
+
+func (h *Handler) ping(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, h.service.Ping())
 }
 
 func (h *Handler) healthz(w http.ResponseWriter, r *http.Request) {
