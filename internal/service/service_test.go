@@ -144,6 +144,10 @@ var _ repository.Repository = (*memoryRepo)(nil)
 
 func baseConfig() config.Config {
 	return config.Config{
+		ImageRef:                  "registry.example.com/billing-service:sha-0123456789abcdef0123456789abcdef01234567",
+		ImageTag:                  "sha-0123456789abcdef0123456789abcdef01234567",
+		ImageCommit:               "0123456789abcdef0123456789abcdef01234567",
+		ImageVersion:              "0123456789abcdef0123456789abcdef01234567",
 		ExporterSources: []config.ExporterSource{{
 			SourceID:       "default",
 			BaseURL:        "https://jp-xhttp-contabo.svc.plus",
@@ -158,6 +162,14 @@ func baseConfig() config.Config {
 		PricePerByte:              0.5,
 		InitialIncludedQuotaBytes: 0,
 		InitialBalance:            0,
+	}
+}
+
+func TestPingReflectsImageRef(t *testing.T) {
+	svc := New(baseConfig(), &fakeWindowSource{}, newMemoryRepo())
+	ping := svc.Ping()
+	if ping.Image != baseConfig().ImageRef || ping.Tag != baseConfig().ImageTag || ping.Commit != baseConfig().ImageCommit || ping.Version != baseConfig().ImageVersion {
+		t.Fatalf("unexpected ping %#v", ping)
 	}
 }
 

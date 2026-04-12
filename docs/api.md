@@ -5,6 +5,21 @@ upstream and downstream interfaces it depends on.
 
 ## Service endpoints
 
+### `GET /api/ping`
+
+Returns the runtime image identity exposed by the running container.
+
+Example response:
+
+```json
+{
+  "image": "registry.example.com/billing-service:sha-0123456789abcdef0123456789abcdef01234567",
+  "tag": "sha-0123456789abcdef0123456789abcdef01234567",
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "version": "0123456789abcdef0123456789abcdef01234567"
+}
+```
+
 ### `GET /healthz`
 
 Returns service health derived from the most recent collect-and-rate execution.
@@ -130,6 +145,7 @@ Read-path rules:
 
 Runtime environment variables used by the current implementation:
 
+- `IMAGE`
 - `EXPORTER_BASE_URL`
 - `DATABASE_URL`
 - `LISTEN_ADDR`
@@ -139,6 +155,12 @@ Runtime environment variables used by the current implementation:
 - `PRICE_PER_BYTE`
 - `INITIAL_INCLUDED_QUOTA_BYTES`
 - `INITIAL_BALANCE`
+
+`IMAGE` rule:
+
+- it must contain the full image reference used to start the container
+- `/api/ping` derives `image`, `tag`, `commit`, and `version` from this value
+- when `IMAGE` is missing or malformed, runtime metadata fields should remain empty rather than fabricated
 
 `DATABASE_URL` rule:
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -19,6 +20,10 @@ type ExporterSource struct {
 }
 
 type Config struct {
+	ImageRef                  string
+	ImageTag                  string
+	ImageCommit               string
+	ImageVersion              string
 	ExporterBaseURL           string
 	ExporterSources           []ExporterSource
 	InternalServiceToken      string
@@ -42,7 +47,13 @@ type rawExporterSource struct {
 }
 
 func Load() (Config, error) {
+	imageRef := strings.TrimSpace(os.Getenv("IMAGE"))
+	imageTag, imageCommit, imageVersion := parseImageRef(imageRef)
 	cfg := Config{
+		ImageRef:             imageRef,
+		ImageTag:             imageTag,
+		ImageCommit:          imageCommit,
+		ImageVersion:         imageVersion,
 		ExporterBaseURL:      strings.TrimRight(strings.TrimSpace(os.Getenv("EXPORTER_BASE_URL")), "/"),
 		InternalServiceToken: strings.TrimSpace(os.Getenv("INTERNAL_SERVICE_TOKEN")),
 		DatabaseURL:          strings.TrimSpace(os.Getenv("DATABASE_URL")),
@@ -85,6 +96,30 @@ func Load() (Config, error) {
 	cfg.InitialBalance = parseFloatEnv("INITIAL_BALANCE", 0)
 	cfg.InitialIncludedQuotaBytes = parseIntEnv("INITIAL_INCLUDED_QUOTA_BYTES", 0)
 	return cfg, nil
+}
+
+var fullSHARegexp = regexp.MustCompile(`^[a-f0-9]{40}$`)
+
+func parseImageRef(imageRef string) (tag, commit, version string) {
+	trimmed := strings.TrimSpace(imageRef)
+	if trimmed == "" {
+		return "", "", ""
+	}
+	colon := strings.LastIndex(trimmed, ":")
+	if colon < 0 || colon == len(trimmed)-1 {
+		return "", "", ""
+	}
+	tag = trimmed[colon+1:]
+	switch {
+	case strings.HasPrefix(tag, "sha-") && fullSHARegexp.MatchString(strings.TrimPrefix(tag, "sha-")):
+		commit = strings.TrimPrefix(tag, "sha-")
+	case fullSHARegexp.MatchString(tag):
+		commit = tag
+	}
+	if commit != "" {
+		version = commit
+	}
+	return tag, commit, version
 }
 
 func loadExporterSources(legacyBaseURL, rawJSON string) ([]ExporterSource, error) {

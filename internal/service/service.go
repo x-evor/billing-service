@@ -118,6 +118,15 @@ func (s *Service) Health() (bool, string) {
 	return s.lastOK, s.lastError
 }
 
+func (s *Service) Ping() model.PingInfo {
+	return model.PingInfo{
+		Image:   s.cfg.ImageRef,
+		Tag:     s.cfg.ImageTag,
+		Commit:  s.cfg.ImageCommit,
+		Version: s.cfg.ImageVersion,
+	}
+}
+
 func (s *Service) collectSource(ctx context.Context, source config.ExporterSource, result *model.JobResult) (model.SourceStatus, error) {
 	state, err := s.repo.GetSourceSyncState(ctx, source.SourceID)
 	if err != nil {
