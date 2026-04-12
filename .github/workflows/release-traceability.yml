@@ -1,0 +1,53 @@
+name: release-traceability
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      service_image_ref: ${{ steps.meta.outputs.service_image_ref }}
+      service_image_tag: ${{ steps.meta.outputs.service_image_tag }}
+      service_image_commit: ${{ steps.meta.outputs.service_image_commit }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive image identity
+        id: meta
+        run: bash ./scripts/github-actions/resolve-service-image-ref.sh
+
+      - name: Build image
+        env:
+          SERVICE_IMAGE_REF: ${{ steps.meta.outputs.service_image_ref }}
+          SERVICE_IMAGE_LATEST_REF: ghcr.io/${{ github.repository }}:latest
+        run: bash ./scripts/github-actions/build-service-image.sh
+
+      - name: Push image
+        run: bash ./scripts/github-actions/push-image-placeholder.sh
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via playbook
+        env:
+          IMAGE_REF: ${{ needs.build.outputs.service_image_ref }}
+          BILLING_SERVICE_IMAGE_REF: ${{ needs.build.outputs.service_image_ref }}
+          BILLING_SERVICE_IMAGE_TAG: ${{ needs.build.outputs.service_image_tag }}
+          BILLING_SERVICE_IMAGE_COMMIT: ${{ needs.build.outputs.service_image_commit }}
+        run: bash ./scripts/github-actions/deploy-billing-service.sh
+
+  validate:
+    runs-on: ubuntu-latest
+    needs: deploy
+    steps:
+      - name: Validate runtime traceability
+        env:
+          SERVICE_IMAGE_REF: ${{ needs.build.outputs.service_image_ref }}
+        run: bash ./scripts/github-actions/validate-release-traceability.sh
