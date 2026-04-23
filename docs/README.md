@@ -2,7 +2,21 @@
 
 This directory holds service-owned documentation for `billing-service`.
 
-## Documents
+## 总览
+
+- [design.md](design.md) - 当前实现下的系统设计、主执行流程、幂等约束和模块边界
+
+## 代码参考
+
+- [reference/cmd.md](reference/cmd.md) - 进程入口、依赖装配与生命周期
+- [reference/config.md](reference/config.md) - 配置结构、环境变量和配置解析函数
+- [reference/model.md](reference/model.md) - 全部共享数据模型与字段语义
+- [reference/exporter.md](reference/exporter.md) - exporter 客户端与窗口拉取契约
+- [reference/repository.md](reference/repository.md) - 仓储接口、PostgreSQL 实现与表映射
+- [reference/service.md](reference/service.md) - 业务服务、主流程与内部辅助函数
+- [reference/httpapi.md](reference/httpapi.md) - HTTP 路由、handler 与状态码映射
+
+## 系统边界与外部契约
 
 - [architecture.md](architecture.md) - deployment topology, billing data flow,
   and current-vs-target architecture notes
@@ -10,6 +24,9 @@ This directory holds service-owned documentation for `billing-service`.
   read-model boundaries
 - [multi-node-https-plan.md](multi-node-https-plan.md) - target-state plan for
   evolving from a single exporter URL to secure multi-node HTTPS ingestion
+
+## SQL 契约
+
 - [../sql/billing-service-schema.sql](../sql/billing-service-schema.sql) -
   reference DDL for the accounting tables `billing-service` depends on
 

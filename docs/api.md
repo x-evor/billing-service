@@ -3,6 +3,14 @@
 This document describes the current `billing-service` task API plus the
 upstream and downstream interfaces it depends on.
 
+If you need the code-level mapping behind these interfaces, read:
+
+- [design.md](design.md)
+- [reference/config.md](reference/config.md)
+- [reference/exporter.md](reference/exporter.md)
+- [reference/httpapi.md](reference/httpapi.md)
+- [reference/service.md](reference/service.md)
+
 ## Service endpoints
 
 ### `GET /api/ping`
@@ -77,48 +85,57 @@ as `reconcile` for operational visibility.
 
 ### `xray-exporter`
 
-`billing-service` currently depends on a single exporter base URL and fetches:
+`billing-service` currently resolves one or more exporter sources and fetches:
 
-- `GET /v1/snapshots/latest`
+- `GET /v1/snapshots/window?since=<RFC3339>&until=<RFC3339>&limit=<n>&cursor=<token>`
 
-Minimum payload shape:
+Current response shape:
 
 ```json
 {
-  "collected_at": "2026-04-08T12:00:00Z",
   "node_id": "jp-xhttp-contabo.svc.plus",
   "env": "prod",
-  "samples": [
+  "snapshots": [
     {
-      "uuid": "uuid-1",
-      "email": "user@example.com",
-      "inbound_tag": "xhttp-premium",
-      "uplink_bytes_total": 1024,
-      "downlink_bytes_total": 2048
+      "collected_at": "2026-04-08T12:00:00Z",
+      "node_id": "jp-xhttp-contabo.svc.plus",
+      "env": "prod",
+      "samples": [
+        {
+          "uuid": "11111111-1111-1111-1111-111111111111",
+          "email": "user@example.com",
+          "inbound_tag": "xhttp-premium",
+          "uplink_bytes_total": 1024,
+          "downlink_bytes_total": 2048
+        }
+      ]
     }
-  ]
+  ],
+  "has_more": false
 }
 ```
 
 Required fields:
 
-- `collected_at`
 - `node_id`
 - `env`
-- `samples[].uuid`
-- `samples[].email`
-- `samples[].inbound_tag`
-- `samples[].uplink_bytes_total`
-- `samples[].downlink_bytes_total`
+- `snapshots[].collected_at`
+- `snapshots[].node_id`
+- `snapshots[].env`
+- `snapshots[].samples[].uuid`
+- `snapshots[].samples[].email`
+- `snapshots[].samples[].inbound_tag`
+- `snapshots[].samples[].uplink_bytes_total`
+- `snapshots[].samples[].downlink_bytes_total`
 
 ### Target upstream contract
 
-Current production behavior remains `GET /v1/snapshots/latest`, but the target
-multi-node design should evolve to:
+Current production behavior already uses a windowed pull API. The target
+multi-node design should evolve around the same shape:
 
 - HTTPS transport for remote exporter pulls
 - source-specific authentication
-- a windowed pull API that supports catch-up and pagination
+- stable catch-up and pagination semantics across multiple exporter nodes
 
 Recommended target path:
 
@@ -154,7 +171,9 @@ Read-path rules:
 Runtime environment variables used by the current implementation:
 
 - `IMAGE`
+- `EXPORTER_SOURCES_JSON`
 - `EXPORTER_BASE_URL`
+- `INTERNAL_SERVICE_TOKEN`
 - `DATABASE_URL`
 - `LISTEN_ADDR`
 - `COLLECT_INTERVAL`
@@ -163,6 +182,13 @@ Runtime environment variables used by the current implementation:
 - `PRICE_PER_BYTE`
 - `INITIAL_INCLUDED_QUOTA_BYTES`
 - `INITIAL_BALANCE`
+
+Source configuration rule:
+
+- prefer `EXPORTER_SOURCES_JSON` as the main source declaration path
+- `EXPORTER_BASE_URL` is still supported as the current compatibility path when
+  JSON source configuration is absent
+- upstream requests use `INTERNAL_SERVICE_TOKEN` as Bearer authentication
 
 `IMAGE` rule:
 

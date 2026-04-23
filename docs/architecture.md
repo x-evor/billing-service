@@ -4,6 +4,13 @@
 Control Plane. It consumes normalized traffic snapshots, computes replay-safe
 minute deltas, and writes billing truth into PostgreSQL.
 
+Code-level references for the current implementation:
+
+- [design.md](design.md)
+- [reference/service.md](reference/service.md)
+- [reference/repository.md](reference/repository.md)
+- [reference/httpapi.md](reference/httpapi.md)
+
 ## Deployment topology
 
 ```mermaid
@@ -47,7 +54,7 @@ flowchart LR
   Agent["agent-svc-plus<br/>control plane"]
 
   Xray -->|"raw per-UUID totals"| Exporter
-  Exporter -->|"GET /v1/snapshots/latest payload"| Billing
+  Exporter -->|"GET /v1/snapshots/window"| Billing
   Agent -->|"schedule collect / reconcile"| Billing
   Billing -->|"idempotent writes"| PostgreSQL
   PostgreSQL -->|"usage + ledger + quota facts"| Accounts
@@ -82,8 +89,10 @@ schema.
 
 ### Current implementation
 
-- `billing-service` pulls from a single `EXPORTER_BASE_URL`
-- the upstream snapshot source is `GET /v1/snapshots/latest`
+- `billing-service` loads one or more sources from `EXPORTER_SOURCES_JSON`
+- if `EXPORTER_SOURCES_JSON` is absent, it still accepts a single
+  `EXPORTER_BASE_URL` as a compatibility path
+- the upstream snapshot source is `GET /v1/snapshots/window`
 - the service is a task-oriented writer with health, status, and job endpoints
 - persisted facts land in the existing `accounts.svc.plus` accounting schema
 
@@ -95,8 +104,8 @@ schema.
   sets without losing `node_id`, `env`, or `inbound_tag`
 - remote exporter ingestion must work over HTTPS because exporters are not
   guaranteed to live on the same private network
-- the target pull contract must support source checkpoints and replay-safe
-  catch-up, rather than relying only on one `latest` snapshot
+- the target pull contract must keep source checkpoints and replay-safe
+  catch-up explicit and observable across nodes
 - `accounts.svc.plus` stays the read model and never delegates user-facing
   usage/billing reads back to `billing-service`
 
